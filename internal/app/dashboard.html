@@ -242,6 +242,7 @@ let utilizationChart = null;
 let tokenFlowChart = null;
 let latestStats = null;
 let tokenFlowBuckets = [];
+const tokenFlowStorageKey = 'claude-meter.token-flow-controls';
 
 const tokenFlowState = {
   metric: 'io',
@@ -250,6 +251,41 @@ const tokenFlowState = {
   model: 'all',
   bucketFilter: null,
 };
+
+function loadTokenFlowPreferences() {
+  try {
+    const raw = window.localStorage.getItem(tokenFlowStorageKey);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (parsed.metric === 'io' || parsed.metric === 'all' || parsed.metric === 'cache') {
+      tokenFlowState.metric = parsed.metric;
+    }
+    if (parsed.range === '1h' || parsed.range === '5h' || parsed.range === '24h' || parsed.range === 'all') {
+      tokenFlowState.range = parsed.range;
+    }
+    if (parsed.interval === '1m' || parsed.interval === '5m' || parsed.interval === '15m') {
+      tokenFlowState.interval = parsed.interval;
+    }
+    if (typeof parsed.model === 'string' && parsed.model.length > 0) {
+      tokenFlowState.model = parsed.model;
+    }
+  } catch (_err) {
+    // Ignore malformed or unavailable local storage.
+  }
+}
+
+function persistTokenFlowPreferences() {
+  try {
+    window.localStorage.setItem(tokenFlowStorageKey, JSON.stringify({
+      metric: tokenFlowState.metric,
+      range: tokenFlowState.range,
+      interval: tokenFlowState.interval,
+      model: tokenFlowState.model,
+    }));
+  } catch (_err) {
+    // Ignore storage failures and continue with in-memory state.
+  }
+}
 
 function gaugeColor(pct) {
   if (pct >= 80) return 'var(--red)';
@@ -534,6 +570,7 @@ function syncTokenModelOptions(records) {
 
   if (currentValue !== 'all' && !models.includes(currentValue)) {
     tokenFlowState.model = 'all';
+    persistTokenFlowPreferences();
   }
   select.value = tokenFlowState.model;
 }
@@ -842,6 +879,7 @@ function initTokenFlowControls() {
     button.addEventListener('click', () => {
       tokenFlowState.metric = button.dataset.metric;
       tokenFlowState.bucketFilter = null;
+      persistTokenFlowPreferences();
       refreshTokenFlowView();
     });
   });
@@ -850,6 +888,7 @@ function initTokenFlowControls() {
     button.addEventListener('click', () => {
       tokenFlowState.range = button.dataset.range;
       tokenFlowState.bucketFilter = null;
+      persistTokenFlowPreferences();
       refreshTokenFlowView();
     });
   });
@@ -858,6 +897,7 @@ function initTokenFlowControls() {
     button.addEventListener('click', () => {
       tokenFlowState.interval = button.dataset.interval;
       tokenFlowState.bucketFilter = null;
+      persistTokenFlowPreferences();
       refreshTokenFlowView();
     });
   });
@@ -865,6 +905,7 @@ function initTokenFlowControls() {
   document.getElementById('tokenModelSelect').addEventListener('change', event => {
     tokenFlowState.model = event.target.value;
     tokenFlowState.bucketFilter = null;
+    persistTokenFlowPreferences();
     refreshTokenFlowView();
   });
 
@@ -933,6 +974,7 @@ async function fetchStats() {
   }
 }
 
+loadTokenFlowPreferences();
 initTokenFlowControls();
 fetchStats();
 setInterval(fetchStats, 5000);
