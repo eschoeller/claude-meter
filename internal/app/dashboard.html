@@ -193,6 +193,11 @@
           <button class="toggle-btn" type="button" data-range="24h">24h</button>
           <button class="toggle-btn" type="button" data-range="all">All</button>
         </div>
+        <div class="toggle-group" id="tokenIntervalControls">
+          <button class="toggle-btn" type="button" data-interval="1m">1m</button>
+          <button class="toggle-btn active" type="button" data-interval="5m">5m</button>
+          <button class="toggle-btn" type="button" data-interval="15m">15m</button>
+        </div>
         <label class="control-label">Model
           <select class="control-select" id="tokenModelSelect">
             <option value="all">All models</option>
@@ -241,6 +246,7 @@ let tokenFlowBuckets = [];
 const tokenFlowState = {
   metric: 'io',
   range: '5h',
+  interval: '5m',
   model: 'all',
   bucketFilter: null,
 };
@@ -387,6 +393,13 @@ function formatRangeLabel(range) {
   return 'last ' + range;
 }
 
+function formatIntervalLabel(interval) {
+  if (interval === '1m') return '1-minute buckets';
+  if (interval === '5m') return '5-minute buckets';
+  if (interval === '15m') return '15-minute buckets';
+  return interval;
+}
+
 function renderWindowCards(windows) {
   const container = document.getElementById('windowCards');
   const entries = Object.entries(windows).sort((a, b) => {
@@ -479,23 +492,11 @@ function getRangeDurationMs(range) {
   return null;
 }
 
-function pickBucketMs(range, spanMs) {
-  if (range === '1h') return 5 * 60 * 1000;
-  if (range === '5h') return 15 * 60 * 1000;
-  if (range === '24h') return 60 * 60 * 1000;
-
-  const choices = [
-    5 * 60 * 1000,
-    15 * 60 * 1000,
-    30 * 60 * 1000,
-    60 * 60 * 1000,
-    3 * 60 * 60 * 1000,
-    6 * 60 * 60 * 1000,
-    12 * 60 * 60 * 1000,
-    24 * 60 * 60 * 1000,
-  ];
-  const target = Math.max(spanMs / 48, choices[0]);
-  return choices.find(choice => choice >= target) || choices[choices.length - 1];
+function pickBucketMs(interval) {
+  if (interval === '1m') return 60 * 1000;
+  if (interval === '5m') return 5 * 60 * 1000;
+  if (interval === '15m') return 15 * 60 * 1000;
+  return 5 * 60 * 1000;
 }
 
 function getSeriesSpecs(metric) {
@@ -560,7 +561,7 @@ function buildTokenFlow(records) {
   const durationMs = getRangeDurationMs(tokenFlowState.range);
   const rangeStartMs = durationMs == null ? earliestMs : latestMs - durationMs;
   const spanMs = Math.max(latestMs - rangeStartMs, 1);
-  const bucketMs = pickBucketMs(tokenFlowState.range, spanMs);
+  const bucketMs = pickBucketMs(tokenFlowState.interval);
   const alignedStartMs = Math.floor(rangeStartMs / bucketMs) * bucketMs;
   const alignedEndMs = Math.floor(latestMs / bucketMs) * bucketMs;
 
@@ -732,7 +733,7 @@ function updateRecentActivityFromState() {
   const modelLabel = tokenFlowState.model === 'all' ? 'all models' : formatModelLabel(tokenFlowState.model);
   const baseLabel = tokenFlowState.bucketFilter
     ? 'Showing ' + Math.min(filtered.length, limit) + ' of ' + filtered.length + ' requests from ' + formatBucketLabel(tokenFlowState.bucketFilter.startMs, tokenFlowState.bucketFilter.endMs)
-    : 'Showing latest ' + Math.min(filtered.length, limit) + ' of ' + filtered.length + ' requests for ' + modelLabel + ' over ' + formatRangeLabel(tokenFlowState.range);
+    : 'Showing latest ' + Math.min(filtered.length, limit) + ' of ' + filtered.length + ' requests for ' + modelLabel + ' over ' + formatRangeLabel(tokenFlowState.range) + ' with ' + formatIntervalLabel(tokenFlowState.interval);
   document.getElementById('recentActivitySummary').textContent = baseLabel;
   document.getElementById('clearActivityFilter').hidden = !tokenFlowState.bucketFilter;
 }
@@ -825,6 +826,7 @@ function syncTokenControlUi(records) {
   syncTokenModelOptions(records);
   setActiveToggle('tokenMetricControls', 'metric', tokenFlowState.metric);
   setActiveToggle('tokenRangeControls', 'range', tokenFlowState.range);
+  setActiveToggle('tokenIntervalControls', 'interval', tokenFlowState.interval);
 }
 
 function refreshTokenFlowView() {
@@ -847,6 +849,14 @@ function initTokenFlowControls() {
   document.querySelectorAll('#tokenRangeControls [data-range]').forEach(button => {
     button.addEventListener('click', () => {
       tokenFlowState.range = button.dataset.range;
+      tokenFlowState.bucketFilter = null;
+      refreshTokenFlowView();
+    });
+  });
+
+  document.querySelectorAll('#tokenIntervalControls [data-interval]').forEach(button => {
+    button.addEventListener('click', () => {
+      tokenFlowState.interval = button.dataset.interval;
       tokenFlowState.bucketFilter = null;
       refreshTokenFlowView();
     });
