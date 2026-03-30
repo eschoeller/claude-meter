@@ -46,8 +46,9 @@
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px; }
   .card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 16px; }
   .card.full { grid-column: 1 / -1; }
-  .gauge-row { display: flex; gap: 32px; flex-wrap: wrap; }
-  .gauge { flex: 1; min-width: 180px; }
+  .window-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+  .window-card { background: rgba(26, 27, 38, 0.55); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .window-card-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
   .gauge-label { font-size: 13px; color: var(--text-muted); margin-bottom: 6px; }
   .gauge-bar { height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; margin-bottom: 4px; position: relative; }
   .gauge-bar .fill { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
@@ -55,6 +56,11 @@
   .gauge-value { font-size: 28px; font-weight: 700; transition: color 0.3s; }
   .gauge-peak { font-size: 12px; color: var(--text-muted); }
   .gauge-reset { font-size: 12px; color: var(--text-muted); }
+  .window-status { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; padding: 2px 8px; border-radius: 999px; border: 1px solid transparent; white-space: nowrap; }
+  .window-status-ok { color: var(--green); border-color: rgba(158, 206, 106, 0.35); background: rgba(158, 206, 106, 0.08); }
+  .window-status-warn { color: var(--yellow); border-color: rgba(224, 175, 104, 0.35); background: rgba(224, 175, 104, 0.08); }
+  .window-status-bad { color: var(--red); border-color: rgba(247, 118, 142, 0.35); background: rgba(247, 118, 142, 0.08); }
+  .window-subline { font-size: 12px; color: var(--text-muted); }
   table { width: 100%; border-collapse: collapse; font-size: 14px; }
   th { text-align: left; font-weight: 600; color: var(--text-muted); padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
   td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
@@ -89,26 +95,17 @@
 
 <div class="container">
   <div class="grid">
-    <div class="card">
-      <h2>Current Utilization</h2>
-      <div class="gauge-row">
-        <div class="gauge">
-          <div class="gauge-label">5-hour window</div>
-          <div class="gauge-bar"><div class="fill" id="fill5h"></div><div class="peak-marker" id="peak5h"></div></div>
-          <div class="gauge-value" id="val5h">-</div>
-          <div class="gauge-peak" id="peakLabel5h">Peak: -</div>
-          <div class="gauge-reset" id="resetLabel5h">Reset: -</div>
-        </div>
-        <div class="gauge">
-          <div class="gauge-label">7-day window</div>
-          <div class="gauge-bar"><div class="fill" id="fill7d"></div><div class="peak-marker" id="peak7d"></div></div>
-          <div class="gauge-value" id="val7d">-</div>
-          <div class="gauge-peak" id="peakLabel7d">Peak: -</div>
-          <div class="gauge-reset" id="resetLabel7d">Reset: -</div>
+    <div class="card full">
+      <h2>Window Overview</h2>
+      <div class="window-grid" id="windowCards">
+        <div class="window-card">
+          <div class="gauge-label">Loading window data...</div>
         </div>
       </div>
     </div>
-    <div class="card">
+  </div>
+  <div class="grid">
+    <div class="card full">
       <h2>Token Usage</h2>
       <table>
         <tr><th>Type</th><th>Tokens</th></tr>
@@ -147,6 +144,15 @@
       </table>
     </div>
   </div>
+  <div class="grid">
+    <div class="card full">
+      <h2>Recent Activity</h2>
+      <table>
+        <tr><th>Time</th><th>Status</th><th>Model</th><th>Tokens</th><th>Windows</th><th>Latency</th></tr>
+        <tbody id="recentRows"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
   <div class="notice">Live dashboard. Refreshes every 5 seconds.</div>
 </div>
 
@@ -182,6 +188,15 @@ function fmtTokens(n) {
   return n.toString();
 }
 
+function windowSortKey(name) {
+  const priority = { '5h': 0, '7d': 1, '7d_sonnet': 2, 'overage': 99 };
+  return priority[name] ?? 50;
+}
+
+function formatWindowName(name) {
+  return name.replace(/_/g, ' ');
+}
+
 function formatReset(resetTs) {
   if (!resetTs) return '-';
   const date = new Date(resetTs * 1000);
@@ -194,30 +209,122 @@ function formatReset(resetTs) {
   }).format(date);
 }
 
-function updateGauge(fillId, peakId, valueId, peakLabelId, resetLabelId, currentPct, peakPct, resetTs) {
-  const fill = document.getElementById(fillId);
-  const peak = document.getElementById(peakId);
-  const value = document.getElementById(valueId);
-  const peakLabel = document.getElementById(peakLabelId);
-  const resetLabel = document.getElementById(resetLabelId);
+function formatCountdown(resetTs) {
+  if (!resetTs) return '-';
+  const remainingSeconds = Math.floor(resetTs - (Date.now() / 1000));
+  if (remainingSeconds <= 0) return 'now';
 
-  fill.style.width = Math.min(currentPct, 100) + '%';
-  fill.style.background = gaugeColor(currentPct);
+  const days = Math.floor(remainingSeconds / 86400);
+  const hours = Math.floor((remainingSeconds % 86400) / 3600);
+  const minutes = Math.floor((remainingSeconds % 3600) / 60);
+  const parts = [];
+  if (days > 0) parts.push(days + 'd');
+  if (hours > 0) parts.push(hours + 'h');
+  if (minutes > 0 || parts.length === 0) parts.push(minutes + 'm');
+  return 'in ' + parts.slice(0, 2).join(' ');
+}
 
-  // Only show a separate peak marker when the displayed peak is ahead of the
-  // displayed current utilization. If they overlap, the red marker reads like
-  // an odd cap on the fill bar rather than useful information.
-  if (peakPct > currentPct) {
-    peak.style.display = 'block';
-    peak.style.left = Math.min(peakPct, 100) + '%';
-  } else {
-    peak.style.display = 'none';
+function formatActivityTime(ts) {
+  if (!ts) return '-';
+  return new Intl.DateTimeFormat(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+    timeZoneName: 'short',
+  }).format(new Date(ts));
+}
+
+function windowStatusLabel(status) {
+  if (!status) return 'observed';
+  return status.replace(/_/g, ' ');
+}
+
+function windowStatusClass(status) {
+  if (!status || status === 'allowed') return 'window-status window-status-ok';
+  if (status.includes('warning')) return 'window-status window-status-warn';
+  if (status.includes('reject') || status.includes('exceeded') || status.includes('denied')) {
+    return 'window-status window-status-bad';
+  }
+  return 'window-status window-status-warn';
+}
+
+function formatRecentTokens(entry) {
+  const parts = [];
+  if (entry.input_tokens) parts.push('in ' + fmtTokens(entry.input_tokens));
+  if (entry.output_tokens) parts.push('out ' + fmtTokens(entry.output_tokens));
+  if (entry.cache_tokens) parts.push('cache ' + fmtTokens(entry.cache_tokens));
+  return parts.length ? parts.join(' | ') : '-';
+}
+
+function formatRecentWindows(windows) {
+  if (!windows || windows.length === 0) return '-';
+  return windows.map(win => {
+    const name = formatWindowName(win.name);
+    if (win.utilization_pct == null) return name;
+    return name + ' ' + win.utilization_pct + '%';
+  }).join(', ');
+}
+
+function renderWindowCards(windows) {
+  const container = document.getElementById('windowCards');
+  const entries = Object.entries(windows).sort((a, b) => {
+    const delta = windowSortKey(a[0]) - windowSortKey(b[0]);
+    return delta !== 0 ? delta : a[0].localeCompare(b[0]);
+  });
+
+  if (entries.length === 0) {
+    container.innerHTML = '<div class="window-card"><div class="gauge-label">No window data yet.</div></div>';
+    return;
   }
 
-  value.textContent = currentPct + '%';
-  value.className = 'gauge-value ' + gaugeClass(currentPct);
-  peakLabel.textContent = 'Peak: ' + peakPct + '%';
-  resetLabel.textContent = 'Reset: ' + formatReset(resetTs);
+  let html = '';
+  for (const [name, win] of entries) {
+    const currentPct = Math.round(((win.current || 0) * 1000)) / 10;
+    const peakPct = Math.round(((win.peak || 0) * 1000)) / 10;
+    const resetTs = win.reset_ts || null;
+    const status = win.status || '';
+    const peakMarker = peakPct > currentPct
+      ? '<div class="peak-marker" style="left: ' + Math.min(peakPct, 100) + '%"></div>'
+      : '';
+
+    html += ''
+      + '<div class="window-card">'
+      +   '<div class="window-card-top">'
+      +     '<div class="gauge-label">' + esc(formatWindowName(name)) + '</div>'
+      +     '<div class="' + windowStatusClass(status) + '">' + esc(windowStatusLabel(status)) + '</div>'
+      +   '</div>'
+      +   '<div class="gauge-bar">'
+      +     '<div class="fill" style="width: ' + Math.min(currentPct, 100) + '%; background: ' + gaugeColor(currentPct) + '"></div>'
+      +     peakMarker
+      +   '</div>'
+      +   '<div class="gauge-value ' + gaugeClass(currentPct) + '">' + currentPct + '%</div>'
+      +   '<div class="gauge-peak">Peak: ' + peakPct + '%</div>'
+      +   '<div class="gauge-reset">Reset: ' + esc(formatReset(resetTs)) + '</div>'
+      +   '<div class="window-subline">In: ' + esc(formatCountdown(resetTs)) + '</div>'
+      + '</div>';
+  }
+
+  container.innerHTML = html;
+}
+
+function renderRecentActivity(entries) {
+  let html = '';
+  for (const entry of entries) {
+    const statusLabel = entry.retry_after_s
+      ? entry.status + ' (' + entry.retry_after_s + 's)'
+      : entry.status;
+    html += ''
+      + '<tr>'
+      +   '<td>' + esc(formatActivityTime(entry.timestamp)) + '</td>'
+      +   '<td>' + esc(String(statusLabel || '-')) + '</td>'
+      +   '<td>' + esc(entry.model || '-') + '</td>'
+      +   '<td>' + esc(formatRecentTokens(entry)) + '</td>'
+      +   '<td>' + esc(formatRecentWindows(entry.windows || [])) + '</td>'
+      +   '<td>' + esc(String(entry.latency_ms || 0)) + 'ms</td>'
+      + '</tr>';
+  }
+
+  document.getElementById('recentRows').innerHTML = html || '<tr><td colspan="6" class="muted">No recent activity yet</td></tr>';
 }
 
 function updateDashboard(data) {
@@ -232,17 +339,7 @@ function updateDashboard(data) {
   document.getElementById('updatedAt').textContent = (data.generated_at || '').substring(0,19).replace('T',' ') + ' UTC';
 
   const windows = ts.windows || {};
-  const w5h = windows['5h'] || {};
-  const w7d = windows['7d'] || {};
-  const cur5h = Math.round((w5h.current || 0) * 1000) / 10;
-  const peak5h = Math.round((w5h.peak || 0) * 1000) / 10;
-  const reset5h = w5h.reset_ts || null;
-  const cur7d = Math.round((w7d.current || 0) * 1000) / 10;
-  const peak7d = Math.round((w7d.peak || 0) * 1000) / 10;
-  const reset7d = w7d.reset_ts || null;
-
-  updateGauge('fill5h', 'peak5h', 'val5h', 'peakLabel5h', 'resetLabel5h', cur5h, peak5h, reset5h);
-  updateGauge('fill7d', 'peak7d', 'val7d', 'peakLabel7d', 'resetLabel7d', cur7d, peak7d, reset7d);
+  renderWindowCards(windows);
 
   document.getElementById('tokInput').textContent = fmt(ts.input_tokens || 0);
   document.getElementById('tokOutput').textContent = fmt(ts.output_tokens || 0);
@@ -273,6 +370,8 @@ function updateDashboard(data) {
     modelHTML += '<tr><td>' + esc(model) + '</td><td>' + fmt(mdata.calls) + '</td><td>' + fmtTokens(mdata.input) + '</td><td>' + fmtTokens(mdata.output) + '</td></tr>';
   }
   document.getElementById('modelRows').innerHTML = modelHTML || '<tr><td colspan="4" class="muted">No model data</td></tr>';
+
+  renderRecentActivity(data.recent_activity || []);
 
   // Chart
   updateChart(data.time_series_5h || [], data.time_series_7d || []);

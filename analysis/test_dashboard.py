@@ -16,15 +16,20 @@ def _make_record(
     output_tokens=50,
     reset_5h=None,
     reset_7d=None,
+    extra_windows=None,
+    status_5h="allowed",
+    status_7d="allowed",
 ):
     windows = {
-        "5h": {"status": "allowed", "utilization": utilization_5h},
-        "7d": {"status": "allowed", "utilization": utilization_5h * 0.5},
+        "5h": {"status": status_5h, "utilization": utilization_5h},
+        "7d": {"status": status_7d, "utilization": utilization_5h * 0.5},
     }
     if reset_5h is not None:
         windows["5h"]["reset_ts"] = reset_5h
     if reset_7d is not None:
         windows["7d"]["reset_ts"] = reset_7d
+    if extra_windows:
+        windows.update(extra_windows)
 
     return {
         "id": record_id,
@@ -70,6 +75,8 @@ def test_output_structure_with_sample_records():
     assert "chart.js@4.4.7" in html
     assert "viewport" in html
     assert "claude-meter" in html
+    assert "Window Overview" in html
+    assert "Recent Activity" in html
 
 
 def test_output_includes_window_reset_labels():
@@ -80,6 +87,13 @@ def test_output_includes_window_reset_labels():
             utilization_5h=0.10,
             reset_5h=1774900800,
             reset_7d=1775268000,
+            extra_windows={
+                "7d_sonnet": {
+                    "status": "allowed",
+                    "utilization": 0.03,
+                    "reset_ts": 1775491200,
+                }
+            },
         ),
         _make_record(
             2,
@@ -87,6 +101,14 @@ def test_output_includes_window_reset_labels():
             utilization_5h=0.15,
             reset_5h=1774904400,
             reset_7d=1775268000,
+            status_5h="allowed_warning",
+            extra_windows={
+                "7d_sonnet": {
+                    "status": "allowed",
+                    "utilization": 0.04,
+                    "reset_ts": 1775491200,
+                }
+            },
         ),
     ]
 
@@ -95,8 +117,11 @@ def test_output_includes_window_reset_labels():
 
     assert data["token_summary"]["windows"]["5h"]["reset_ts"] == 1774904400
     assert data["token_summary"]["windows"]["7d"]["reset_ts"] == 1775268000
+    assert data["token_summary"]["windows"]["5h"]["status"] == "allowed_warning"
     assert "Reset: 2026-03-30 21:00 UTC" in html
     assert "Reset: 2026-04-04 02:00 UTC" in html
+    assert "7d sonnet" in html
+    assert "In: " in html
 
 
 def test_output_flag_writes_to_path(tmp_path):
@@ -122,6 +147,7 @@ def test_build_dashboard_data_returns_dict():
     assert "budget_estimates" in data
     assert "time_series_5h" in data
     assert "time_series_7d" in data
+    assert "recent_activity" in data
 
 
 def test_api_json_output():
@@ -131,6 +157,7 @@ def test_api_json_output():
     parsed = json.loads(json_str)
     assert parsed["token_summary"]["api_calls"] == 3
     assert "windows" in parsed["token_summary"]
+    assert len(parsed["recent_activity"]) == 3
 
 
 def test_api_json_empty_data():
@@ -164,3 +191,4 @@ def test_api_flag_outputs_json(tmp_path):
     assert result.returncode == 0, f"stderr: {result.stderr}"
     data = json.loads(result.stdout)
     assert data["token_summary"]["api_calls"] == 1
+    assert data["recent_activity"]

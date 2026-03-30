@@ -598,6 +598,9 @@ def build_token_summary(records):
             reset_ts = wdata.get("reset_ts")
             if isinstance(reset_ts, int) and reset_ts > 0:
                 entry["reset_ts"] = reset_ts
+            status = wdata.get("status")
+            if status:
+                entry["status"] = status
 
             util = wdata.get("utilization")
             if not isinstance(util, (int, float)):
