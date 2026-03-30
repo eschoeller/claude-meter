@@ -148,6 +148,7 @@ def test_build_dashboard_data_returns_dict():
     assert "budget_estimates" in data
     assert "time_series_5h" in data
     assert "time_series_7d" in data
+    assert "activity_records" in data
     assert "recent_activity" in data
 
 
@@ -158,7 +159,10 @@ def test_api_json_output():
     parsed = json.loads(json_str)
     assert parsed["token_summary"]["api_calls"] == 3
     assert "windows" in parsed["token_summary"]
+    assert len(parsed["activity_records"]) == 3
     assert len(parsed["recent_activity"]) == 3
+    assert parsed["activity_records"][0]["cache_create_tokens"] == 0
+    assert parsed["activity_records"][0]["cache_read_tokens"] == 0
 
 
 def test_api_json_empty_data():
@@ -192,4 +196,5 @@ def test_api_flag_outputs_json(tmp_path):
     assert result.returncode == 0, f"stderr: {result.stderr}"
     data = json.loads(result.stdout)
     assert data["token_summary"]["api_calls"] == 1
+    assert data["activity_records"]
     assert data["recent_activity"]

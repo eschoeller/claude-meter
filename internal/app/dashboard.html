@@ -61,6 +61,45 @@
   .window-status-warn { color: var(--yellow); border-color: rgba(224, 175, 104, 0.35); background: rgba(224, 175, 104, 0.08); }
   .window-status-bad { color: var(--red); border-color: rgba(247, 118, 142, 0.35); background: rgba(247, 118, 142, 0.08); }
   .window-subline { font-size: 12px; color: var(--text-muted); }
+  .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+  .card-head h2 { margin-bottom: 0; }
+  .section-note { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+  .controls-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
+  .toggle-group { display: inline-flex; flex-wrap: wrap; gap: 8px; }
+  .toggle-btn {
+    appearance: none;
+    border: 1px solid var(--border);
+    background: rgba(26, 27, 38, 0.55);
+    color: var(--text-muted);
+    border-radius: 999px;
+    padding: 6px 12px;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+  }
+  .toggle-btn.active { color: var(--text); border-color: var(--accent); background: rgba(122, 162, 247, 0.12); }
+  .control-label { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); }
+  .control-select {
+    border: 1px solid var(--border);
+    background: rgba(26, 27, 38, 0.55);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font: inherit;
+    font-size: 12px;
+  }
+  .link-button {
+    appearance: none;
+    border: 0;
+    background: none;
+    color: var(--accent);
+    cursor: pointer;
+    padding: 0;
+    font: inherit;
+    font-size: 12px;
+  }
+  .link-button[hidden] { display: none; }
   table { width: 100%; border-collapse: collapse; font-size: 14px; }
   th { text-align: left; font-weight: 600; color: var(--text-muted); padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
   td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
@@ -136,6 +175,38 @@
   </div>
   <div class="grid">
     <div class="card full">
+      <div class="card-head">
+        <div>
+          <h2>Token Flow</h2>
+          <div class="section-note">Use the toggles to isolate spikes. Click a point to filter Recent Activity.</div>
+        </div>
+      </div>
+      <div class="controls-row">
+        <div class="toggle-group" id="tokenMetricControls">
+          <button class="toggle-btn active" type="button" data-metric="io">I/O</button>
+          <button class="toggle-btn" type="button" data-metric="all">All</button>
+          <button class="toggle-btn" type="button" data-metric="cache">Cache</button>
+        </div>
+        <div class="toggle-group" id="tokenRangeControls">
+          <button class="toggle-btn" type="button" data-range="1h">1h</button>
+          <button class="toggle-btn active" type="button" data-range="5h">5h</button>
+          <button class="toggle-btn" type="button" data-range="24h">24h</button>
+          <button class="toggle-btn" type="button" data-range="all">All</button>
+        </div>
+        <label class="control-label">Model
+          <select class="control-select" id="tokenModelSelect">
+            <option value="all">All models</option>
+          </select>
+        </label>
+      </div>
+      <div class="chart-container">
+        <canvas id="tokenFlowChart"></canvas>
+        <p id="noTokenChartData" style="color: var(--text-muted); text-align: center; padding: 60px 0; display: none;">No token flow data available for the current filters</p>
+      </div>
+    </div>
+  </div>
+  <div class="grid">
+    <div class="card full">
       <h2>Per-Model Breakdown</h2>
       <table>
         <tr><th>Model</th><th>Calls</th><th>Input Tokens</th><th>Output Tokens</th></tr>
@@ -145,7 +216,13 @@
   </div>
   <div class="grid">
     <div class="card full">
-      <h2>Recent Activity</h2>
+      <div class="card-head">
+        <div>
+          <h2>Recent Activity</h2>
+          <div class="section-note" id="recentActivitySummary">Showing latest requests</div>
+        </div>
+        <button class="link-button" id="clearActivityFilter" type="button" hidden>Clear spike filter</button>
+      </div>
       <table>
         <tr><th>Time</th><th>Status</th><th>Model</th><th>Tokens</th><th>Windows</th><th>Latency</th></tr>
         <tbody id="recentRows"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody>
@@ -156,7 +233,17 @@
 </div>
 
 <script>
-let chart = null;
+let utilizationChart = null;
+let tokenFlowChart = null;
+let latestStats = null;
+let tokenFlowBuckets = [];
+
+const tokenFlowState = {
+  metric: 'io',
+  range: '5h',
+  model: 'all',
+  bucketFilter: null,
+};
 
 function gaugeColor(pct) {
   if (pct >= 80) return 'var(--red)';
@@ -174,7 +261,6 @@ function fmt(n) {
   return n.toLocaleString();
 }
 
-// Escape HTML entities to prevent XSS from model/window names in API data
 function esc(s) {
   const d = document.createElement('div');
   d.textContent = s;
@@ -182,8 +268,8 @@ function esc(s) {
 }
 
 function fmtTokens(n) {
-  if (n >= 1000000) return (n/1000000).toFixed(1) + 'M';
-  if (n >= 1000) return (n/1000).toFixed(1) + 'K';
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
   return n.toString();
 }
 
@@ -233,6 +319,34 @@ function formatActivityTime(ts) {
   }).format(new Date(ts));
 }
 
+function formatBucketLabel(startMs, endMs) {
+  const start = new Date(startMs);
+  const end = new Date(endMs);
+  const startLabel = new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  }).format(start);
+  const endLabel = new Intl.DateTimeFormat(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  }).format(end);
+  return startLabel + ' to ' + endLabel;
+}
+
+function formatChartTickLabel(value) {
+  const date = new Date(value);
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
+}
+
 function windowStatusLabel(status) {
   if (!status) return 'observed';
   return status.replace(/_/g, ' ');
@@ -262,6 +376,15 @@ function formatRecentWindows(windows) {
     if (win.utilization_pct == null) return name;
     return name + ' ' + win.utilization_pct + '%';
   }).join(', ');
+}
+
+function formatModelLabel(model) {
+  return model === '-' ? 'Unspecified' : model;
+}
+
+function formatRangeLabel(range) {
+  if (range === 'all') return 'all available data';
+  return 'last ' + range;
 }
 
 function renderWindowCards(windows) {
@@ -316,7 +439,7 @@ function renderRecentActivity(entries) {
       + '<tr>'
       +   '<td>' + esc(formatActivityTime(entry.timestamp)) + '</td>'
       +   '<td>' + esc(String(statusLabel || '-')) + '</td>'
-      +   '<td>' + esc(entry.model || '-') + '</td>'
+      +   '<td>' + esc(formatModelLabel(entry.model || '-')) + '</td>'
       +   '<td>' + esc(formatRecentTokens(entry)) + '</td>'
       +   '<td>' + esc(formatRecentWindows(entry.windows || [])) + '</td>'
       +   '<td>' + esc(String(entry.latency_ms || 0)) + 'ms</td>'
@@ -326,61 +449,302 @@ function renderRecentActivity(entries) {
   document.getElementById('recentRows').innerHTML = html || '<tr><td colspan="6" class="muted">No recent activity yet</td></tr>';
 }
 
-function updateDashboard(data) {
-  const ts = data.token_summary || {};
-  const budget = data.budget_estimates || {};
-
-  document.getElementById('planTier').textContent = ts.plan_tier || 'unknown';
-  const first = (ts.first_timestamp || '').substring(0, 10);
-  const last = (ts.last_timestamp || '').substring(0, 10);
-  document.getElementById('dateRange').textContent = first && last ? first + ' to ' + last : 'N/A';
-  document.getElementById('apiCalls').textContent = fmt(ts.api_calls || 0);
-  document.getElementById('updatedAt').textContent = (data.generated_at || '').substring(0,19).replace('T',' ') + ' UTC';
-
-  const windows = ts.windows || {};
-  renderWindowCards(windows);
-
-  document.getElementById('tokInput').textContent = fmt(ts.input_tokens || 0);
-  document.getElementById('tokOutput').textContent = fmt(ts.output_tokens || 0);
-  const cacheRead = ts.cache_read_tokens || 0;
-  document.getElementById('tokCacheRead').textContent = fmt(cacheRead) + (ts.cache_read_pct ? ' (' + ts.cache_read_pct + '%)' : '');
-  document.getElementById('tokCacheCreate').textContent = fmt(ts.cache_create_tokens || 0);
-  const total = (ts.input_tokens||0) + (ts.output_tokens||0) + cacheRead + (ts.cache_create_tokens||0);
-  document.getElementById('tokTotal').textContent = fmt(total);
-
-  // Budget (esc() all data values to prevent XSS from API data)
-  let budgetHTML = '';
-  for (const [wname, est] of Object.entries(budget).sort()) {
-    const count = est.sessions || 0;
-    if (count === 0) {
-      budgetHTML += '<tr><td>' + esc(wname) + '</td><td colspan="4" class="muted">Not enough data</td></tr>';
-    } else if (count === 1) {
-      budgetHTML += '<tr><td>' + esc(wname) + '</td><td>$' + Math.round(est.median).toLocaleString() + '</td><td>$' + Math.round(est.median).toLocaleString() + '</td><td>-</td><td>1</td></tr>';
-    } else {
-      budgetHTML += '<tr><td>' + esc(wname) + '</td><td>$' + Math.round(est.min).toLocaleString() + ' - $' + Math.round(est.max).toLocaleString() + '</td><td>$' + Math.round(est.median).toLocaleString() + '</td><td>$' + Math.round(est.p25||0).toLocaleString() + ' - $' + Math.round(est.p75||0).toLocaleString() + '</td><td>' + count + '</td></tr>';
-    }
-  }
-  document.getElementById('budgetRows').innerHTML = budgetHTML || '<tr><td colspan="5" class="muted">Not enough data</td></tr>';
-
-  // Models (esc() model names to prevent XSS)
-  let modelHTML = '';
-  const models = ts.models || {};
-  for (const [model, mdata] of Object.entries(models).sort((a,b) => b[1].calls - a[1].calls)) {
-    modelHTML += '<tr><td>' + esc(model) + '</td><td>' + fmt(mdata.calls) + '</td><td>' + fmtTokens(mdata.input) + '</td><td>' + fmtTokens(mdata.output) + '</td></tr>';
-  }
-  document.getElementById('modelRows').innerHTML = modelHTML || '<tr><td colspan="4" class="muted">No model data</td></tr>';
-
-  renderRecentActivity(data.recent_activity || []);
-
-  // Chart
-  updateChart(data.time_series_5h || [], data.time_series_7d || []);
+function getActivityRecords(data) {
+  return data.activity_records || data.recent_activity || [];
 }
 
-function updateChart(ts5h, ts7d) {
+function getLatestActivityMs(records) {
+  let latest = 0;
+  for (const record of records) {
+    const ts = Date.parse(record.timestamp || '');
+    if (!Number.isNaN(ts) && ts > latest) latest = ts;
+  }
+  return latest || Date.now();
+}
+
+function getEarliestActivityMs(records) {
+  let earliest = null;
+  for (const record of records) {
+    const ts = Date.parse(record.timestamp || '');
+    if (Number.isNaN(ts)) continue;
+    if (earliest == null || ts < earliest) earliest = ts;
+  }
+  return earliest == null ? Date.now() : earliest;
+}
+
+function getRangeDurationMs(range) {
+  if (range === '1h') return 60 * 60 * 1000;
+  if (range === '5h') return 5 * 60 * 60 * 1000;
+  if (range === '24h') return 24 * 60 * 60 * 1000;
+  return null;
+}
+
+function pickBucketMs(range, spanMs) {
+  if (range === '1h') return 5 * 60 * 1000;
+  if (range === '5h') return 15 * 60 * 1000;
+  if (range === '24h') return 60 * 60 * 1000;
+
+  const choices = [
+    5 * 60 * 1000,
+    15 * 60 * 1000,
+    30 * 60 * 1000,
+    60 * 60 * 1000,
+    3 * 60 * 60 * 1000,
+    6 * 60 * 60 * 1000,
+    12 * 60 * 60 * 1000,
+    24 * 60 * 60 * 1000,
+  ];
+  const target = Math.max(spanMs / 48, choices[0]);
+  return choices.find(choice => choice >= target) || choices[choices.length - 1];
+}
+
+function getSeriesSpecs(metric) {
+  const all = [
+    { field: 'input_tokens', label: 'Input', borderColor: '#7aa2f7', backgroundColor: 'rgba(122,162,247,0.12)' },
+    { field: 'output_tokens', label: 'Output', borderColor: '#f7768e', backgroundColor: 'rgba(247,118,142,0.12)' },
+    { field: 'cache_read_tokens', label: 'Cache Read', borderColor: '#e0af68', backgroundColor: 'rgba(224,175,104,0.12)', borderDash: [6, 4] },
+    { field: 'cache_create_tokens', label: 'Cache Create', borderColor: '#9ece6a', backgroundColor: 'rgba(158,206,106,0.12)', borderDash: [2, 4] },
+  ];
+  if (metric === 'io') return all.slice(0, 2);
+  if (metric === 'cache') return all.slice(2);
+  return all;
+}
+
+function setActiveToggle(groupId, attrName, value) {
+  document.querySelectorAll('#' + groupId + ' [data-' + attrName + ']').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset[attrName] === value);
+  });
+}
+
+function syncTokenModelOptions(records) {
+  const select = document.getElementById('tokenModelSelect');
+  const models = Array.from(new Set(
+    records
+      .map(record => record.model || '-')
+      .filter(model => model && model !== 'all')
+  )).sort((a, b) => formatModelLabel(a).localeCompare(formatModelLabel(b)));
+
+  const currentValue = tokenFlowState.model;
+  let html = '<option value="all">All models</option>';
+  for (const model of models) {
+    html += '<option value="' + esc(model) + '">' + esc(formatModelLabel(model)) + '</option>';
+  }
+  select.innerHTML = html;
+
+  if (currentValue !== 'all' && !models.includes(currentValue)) {
+    tokenFlowState.model = 'all';
+  }
+  select.value = tokenFlowState.model;
+}
+
+function getScopedActivityRecords(records) {
+  if (!records.length) return [];
+
+  const latestMs = getLatestActivityMs(records);
+  const durationMs = getRangeDurationMs(tokenFlowState.range);
+  const rangeStartMs = durationMs == null ? getEarliestActivityMs(records) : latestMs - durationMs;
+
+  return records.filter(record => {
+    const ts = Date.parse(record.timestamp || '');
+    if (Number.isNaN(ts)) return false;
+    if (ts < rangeStartMs || ts > latestMs) return false;
+    if (tokenFlowState.model !== 'all' && (record.model || '-') !== tokenFlowState.model) return false;
+    return true;
+  });
+}
+
+function buildTokenFlow(records) {
+  const scopedRecords = getScopedActivityRecords(records);
+  const latestMs = getLatestActivityMs(records);
+  const earliestMs = scopedRecords.length ? getEarliestActivityMs(scopedRecords) : latestMs;
+  const durationMs = getRangeDurationMs(tokenFlowState.range);
+  const rangeStartMs = durationMs == null ? earliestMs : latestMs - durationMs;
+  const spanMs = Math.max(latestMs - rangeStartMs, 1);
+  const bucketMs = pickBucketMs(tokenFlowState.range, spanMs);
+  const alignedStartMs = Math.floor(rangeStartMs / bucketMs) * bucketMs;
+  const alignedEndMs = Math.floor(latestMs / bucketMs) * bucketMs;
+
+  const buckets = [];
+  const bucketMap = {};
+  for (let ts = alignedStartMs; ts <= alignedEndMs; ts += bucketMs) {
+    const bucket = {
+      key: ts,
+      label: new Date(ts).toISOString(),
+      startMs: ts,
+      endMs: ts + bucketMs,
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_create_tokens: 0,
+    };
+    buckets.push(bucket);
+    bucketMap[ts] = bucket;
+  }
+
+  for (const record of scopedRecords) {
+    const ts = Date.parse(record.timestamp || '');
+    if (Number.isNaN(ts)) continue;
+    const bucketKey = Math.floor(ts / bucketMs) * bucketMs;
+    const bucket = bucketMap[bucketKey];
+    if (!bucket) continue;
+    bucket.input_tokens += record.input_tokens || 0;
+    bucket.output_tokens += record.output_tokens || 0;
+    bucket.cache_read_tokens += record.cache_read_tokens || 0;
+    bucket.cache_create_tokens += record.cache_create_tokens || 0;
+  }
+
+  const specs = getSeriesSpecs(tokenFlowState.metric);
+  const datasets = specs.map(spec => ({
+    label: spec.label,
+    data: buckets.map(bucket => ({ x: bucket.label, y: bucket[spec.field] || 0 })),
+    borderColor: spec.borderColor,
+    backgroundColor: spec.backgroundColor,
+    borderWidth: 2,
+    pointRadius: buckets.length <= 48 ? 2 : 0,
+    fill: false,
+    tension: 0.25,
+    spanGaps: false,
+    borderDash: spec.borderDash || [],
+  }));
+
+  const hasData = datasets.some(dataset => dataset.data.some(point => point.y > 0));
+  return { buckets, datasets, hasData, scopedCount: scopedRecords.length };
+}
+
+function renderTokenFlowChart(records) {
+  const ctx = document.getElementById('tokenFlowChart');
+  const empty = document.getElementById('noTokenChartData');
+  if (!ctx) return;
+
+  const flow = buildTokenFlow(records);
+  tokenFlowBuckets = flow.buckets;
+
+  if (
+    tokenFlowState.bucketFilter &&
+    !tokenFlowBuckets.some(bucket =>
+      bucket.startMs === tokenFlowState.bucketFilter.startMs &&
+      bucket.endMs === tokenFlowState.bucketFilter.endMs
+    )
+  ) {
+    tokenFlowState.bucketFilter = null;
+  }
+
+  if (!flow.hasData) {
+    if (tokenFlowChart) {
+      tokenFlowChart.destroy();
+      tokenFlowChart = null;
+    }
+    ctx.style.display = 'none';
+    empty.style.display = 'block';
+    return;
+  }
+
+  ctx.style.display = 'block';
+  empty.style.display = 'none';
+
+  if (tokenFlowChart) {
+    tokenFlowChart.destroy();
+  }
+
+  tokenFlowChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: flow.buckets.map(bucket => bucket.label),
+      datasets: flow.datasets,
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: { mode: 'index', intersect: false },
+      onClick: function(_event, elements) {
+        if (!elements.length) return;
+        const bucket = tokenFlowBuckets[elements[0].index];
+        if (!bucket) return;
+        if (
+          tokenFlowState.bucketFilter &&
+          tokenFlowState.bucketFilter.startMs === bucket.startMs &&
+          tokenFlowState.bucketFilter.endMs === bucket.endMs
+        ) {
+          tokenFlowState.bucketFilter = null;
+        } else {
+          tokenFlowState.bucketFilter = { startMs: bucket.startMs, endMs: bucket.endMs };
+        }
+        updateRecentActivityFromState();
+      },
+      scales: {
+        x: {
+          type: 'category',
+          ticks: {
+            color: '#565f89',
+            maxTicksLimit: 12,
+            maxRotation: 45,
+            callback: function(value) {
+              const label = this.getLabelForValue(value);
+              return label ? formatChartTickLabel(label) : '';
+            }
+          },
+          grid: { color: 'rgba(65,72,104,0.3)' },
+        },
+        y: {
+          min: 0,
+          ticks: {
+            color: '#565f89',
+            callback: value => fmtTokens(value),
+          },
+          grid: { color: 'rgba(65,72,104,0.3)' },
+        }
+      },
+      plugins: {
+        legend: { labels: { color: '#c0caf5' } },
+        tooltip: {
+          callbacks: {
+            title: function(items) {
+              if (!items.length) return '';
+              const bucket = tokenFlowBuckets[items[0].dataIndex];
+              return bucket ? formatBucketLabel(bucket.startMs, bucket.endMs) : '';
+            },
+            label: function(item) {
+              return item.dataset.label + ': ' + fmtTokens(item.raw.y || 0);
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
+function updateRecentActivityFromState() {
+  const records = latestStats ? getActivityRecords(latestStats) : [];
+  const scoped = getScopedActivityRecords(records);
+  let filtered = scoped;
+
+  if (tokenFlowState.bucketFilter) {
+    filtered = scoped.filter(record => {
+      const ts = Date.parse(record.timestamp || '');
+      return !Number.isNaN(ts) && ts >= tokenFlowState.bucketFilter.startMs && ts < tokenFlowState.bucketFilter.endMs;
+    });
+  }
+
+  const limit = tokenFlowState.bucketFilter ? 50 : 12;
+  renderRecentActivity(filtered.slice(0, limit));
+
+  const modelLabel = tokenFlowState.model === 'all' ? 'all models' : formatModelLabel(tokenFlowState.model);
+  const baseLabel = tokenFlowState.bucketFilter
+    ? 'Showing ' + Math.min(filtered.length, limit) + ' of ' + filtered.length + ' requests from ' + formatBucketLabel(tokenFlowState.bucketFilter.startMs, tokenFlowState.bucketFilter.endMs)
+    : 'Showing latest ' + Math.min(filtered.length, limit) + ' of ' + filtered.length + ' requests for ' + modelLabel + ' over ' + formatRangeLabel(tokenFlowState.range);
+  document.getElementById('recentActivitySummary').textContent = baseLabel;
+  document.getElementById('clearActivityFilter').hidden = !tokenFlowState.bucketFilter;
+}
+
+function updateUtilizationChart(ts5h, ts7d) {
   const ctx = document.getElementById('utilizationChart');
   if (!ctx) return;
   if (ts5h.length === 0 && ts7d.length === 0) {
-    if (chart) { chart.destroy(); chart = null; }
+    if (utilizationChart) {
+      utilizationChart.destroy();
+      utilizationChart = null;
+    }
     ctx.style.display = 'none';
     document.getElementById('noChartData').style.display = 'block';
     return;
@@ -393,21 +757,23 @@ function updateChart(ts5h, ts7d) {
   ts7d.forEach(p => allTs.add(p.timestamp));
   const labels = Array.from(allTs).sort();
 
-  const map5h = {}; ts5h.forEach(p => { map5h[p.timestamp] = p.utilization; });
-  const map7d = {}; ts7d.forEach(p => { map7d[p.timestamp] = p.utilization; });
+  const map5h = {};
+  ts5h.forEach(p => { map5h[p.timestamp] = p.utilization; });
+  const map7d = {};
+  ts7d.forEach(p => { map7d[p.timestamp] = p.utilization; });
 
   const data5h = labels.map(ts => ({ x: ts, y: map5h[ts] != null ? (map5h[ts] * 100).toFixed(1) : null }));
   const data7d = labels.map(ts => ({ x: ts, y: map7d[ts] != null ? (map7d[ts] * 100).toFixed(1) : null }));
 
-  if (chart) {
-    chart.data.labels = labels;
-    chart.data.datasets[0].data = data5h;
-    chart.data.datasets[1].data = data7d;
-    chart.update('none');
+  if (utilizationChart) {
+    utilizationChart.data.labels = labels;
+    utilizationChart.data.datasets[0].data = data5h;
+    utilizationChart.data.datasets[1].data = data7d;
+    utilizationChart.update('none');
     return;
   }
 
-  chart = new Chart(ctx, {
+  utilizationChart = new Chart(ctx, {
     type: 'line',
     data: {
       labels: labels,
@@ -417,16 +783,132 @@ function updateChart(ts5h, ts7d) {
       ]
     },
     options: {
-      responsive: true, maintainAspectRatio: false,
+      responsive: true,
+      maintainAspectRatio: false,
       animation: false,
       interaction: { mode: 'index', intersect: false },
       scales: {
-        x: { type: 'category', ticks: { color: '#565f89', maxTicksLimit: 12, maxRotation: 45, callback: function(v) { const l = this.getLabelForValue(v); return l ? l.substring(5,16).replace('T',' ') : ''; } }, grid: { color: 'rgba(65,72,104,0.3)' } },
-        y: { min: 0, max: 100, ticks: { color: '#565f89', callback: v => v + '%' }, grid: { color: 'rgba(65,72,104,0.3)' } }
+        x: {
+          type: 'category',
+          ticks: {
+            color: '#565f89',
+            maxTicksLimit: 12,
+            maxRotation: 45,
+            callback: function(value) {
+              const label = this.getLabelForValue(value);
+              return label ? label.substring(5, 16).replace('T', ' ') : '';
+            }
+          },
+          grid: { color: 'rgba(65,72,104,0.3)' },
+        },
+        y: {
+          min: 0,
+          max: 100,
+          ticks: { color: '#565f89', callback: value => value + '%' },
+          grid: { color: 'rgba(65,72,104,0.3)' },
+        }
       },
-      plugins: { legend: { labels: { color: '#c0caf5' } }, tooltip: { callbacks: { title: items => items.length ? items[0].raw.x.replace('T',' ').substring(0,19) : '', label: item => item.dataset.label + ': ' + item.raw.y + '%' } } }
+      plugins: {
+        legend: { labels: { color: '#c0caf5' } },
+        tooltip: {
+          callbacks: {
+            title: items => items.length ? items[0].raw.x.replace('T', ' ').substring(0, 19) : '',
+            label: item => item.dataset.label + ': ' + item.raw.y + '%',
+          }
+        }
+      }
     }
   });
+}
+
+function syncTokenControlUi(records) {
+  syncTokenModelOptions(records);
+  setActiveToggle('tokenMetricControls', 'metric', tokenFlowState.metric);
+  setActiveToggle('tokenRangeControls', 'range', tokenFlowState.range);
+}
+
+function refreshTokenFlowView() {
+  if (!latestStats) return;
+  const records = getActivityRecords(latestStats);
+  syncTokenControlUi(records);
+  renderTokenFlowChart(records);
+  updateRecentActivityFromState();
+}
+
+function initTokenFlowControls() {
+  document.querySelectorAll('#tokenMetricControls [data-metric]').forEach(button => {
+    button.addEventListener('click', () => {
+      tokenFlowState.metric = button.dataset.metric;
+      tokenFlowState.bucketFilter = null;
+      refreshTokenFlowView();
+    });
+  });
+
+  document.querySelectorAll('#tokenRangeControls [data-range]').forEach(button => {
+    button.addEventListener('click', () => {
+      tokenFlowState.range = button.dataset.range;
+      tokenFlowState.bucketFilter = null;
+      refreshTokenFlowView();
+    });
+  });
+
+  document.getElementById('tokenModelSelect').addEventListener('change', event => {
+    tokenFlowState.model = event.target.value;
+    tokenFlowState.bucketFilter = null;
+    refreshTokenFlowView();
+  });
+
+  document.getElementById('clearActivityFilter').addEventListener('click', () => {
+    tokenFlowState.bucketFilter = null;
+    updateRecentActivityFromState();
+  });
+}
+
+function updateDashboard(data) {
+  latestStats = data;
+
+  const ts = data.token_summary || {};
+  const budget = data.budget_estimates || {};
+
+  document.getElementById('planTier').textContent = ts.plan_tier || 'unknown';
+  const first = (ts.first_timestamp || '').substring(0, 10);
+  const last = (ts.last_timestamp || '').substring(0, 10);
+  document.getElementById('dateRange').textContent = first && last ? first + ' to ' + last : 'N/A';
+  document.getElementById('apiCalls').textContent = fmt(ts.api_calls || 0);
+  document.getElementById('updatedAt').textContent = (data.generated_at || '').substring(0, 19).replace('T', ' ') + ' UTC';
+
+  renderWindowCards(ts.windows || {});
+
+  document.getElementById('tokInput').textContent = fmt(ts.input_tokens || 0);
+  document.getElementById('tokOutput').textContent = fmt(ts.output_tokens || 0);
+  const cacheRead = ts.cache_read_tokens || 0;
+  document.getElementById('tokCacheRead').textContent = fmt(cacheRead) + (ts.cache_read_pct ? ' (' + ts.cache_read_pct + '%)' : '');
+  document.getElementById('tokCacheCreate').textContent = fmt(ts.cache_create_tokens || 0);
+  const total = (ts.input_tokens || 0) + (ts.output_tokens || 0) + cacheRead + (ts.cache_create_tokens || 0);
+  document.getElementById('tokTotal').textContent = fmt(total);
+
+  let budgetHTML = '';
+  for (const [wname, est] of Object.entries(budget).sort()) {
+    const count = est.sessions || 0;
+    if (count === 0) {
+      budgetHTML += '<tr><td>' + esc(wname) + '</td><td colspan="4" class="muted">Not enough data</td></tr>';
+    } else if (count === 1) {
+      budgetHTML += '<tr><td>' + esc(wname) + '</td><td>$' + Math.round(est.median).toLocaleString() + '</td><td>$' + Math.round(est.median).toLocaleString() + '</td><td>-</td><td>1</td></tr>';
+    } else {
+      budgetHTML += '<tr><td>' + esc(wname) + '</td><td>$' + Math.round(est.min).toLocaleString() + ' - $' + Math.round(est.max).toLocaleString() + '</td><td>$' + Math.round(est.median).toLocaleString() + '</td><td>$' + Math.round(est.p25 || 0).toLocaleString() + ' - $' + Math.round(est.p75 || 0).toLocaleString() + '</td><td>' + count + '</td></tr>';
+    }
+  }
+  document.getElementById('budgetRows').innerHTML = budgetHTML || '<tr><td colspan="5" class="muted">Not enough data</td></tr>';
+
+  let modelHTML = '';
+  const models = ts.models || {};
+  for (const [model, mdata] of Object.entries(models).sort((a, b) => b[1].calls - a[1].calls)) {
+    modelHTML += '<tr><td>' + esc(model) + '</td><td>' + fmt(mdata.calls) + '</td><td>' + fmtTokens(mdata.input) + '</td><td>' + fmtTokens(mdata.output) + '</td></tr>';
+  }
+  document.getElementById('modelRows').innerHTML = modelHTML || '<tr><td colspan="4" class="muted">No model data</td></tr>';
+
+  updateUtilizationChart(data.time_series_5h || [], data.time_series_7d || []);
+  refreshTokenFlowView();
 }
 
 async function fetchStats() {
@@ -441,6 +923,7 @@ async function fetchStats() {
   }
 }
 
+initTokenFlowControls();
 fetchStats();
 setInterval(fetchStats, 5000);
 </script>

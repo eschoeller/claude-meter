@@ -115,10 +115,13 @@ def _usage_int(value):
     return value if isinstance(value, int) else 0
 
 
-def _build_recent_activity(records, limit=12):
-    recent = []
+def _build_activity_records(records, limit=None):
+    activity = []
     ordered = sorted(records, key=_record_sort_timestamp, reverse=True)
-    for record in ordered[:limit]:
+    if limit is not None:
+        ordered = ordered[:limit]
+
+    for record in ordered:
         usage = record.get("usage") or {}
         windows = []
         for name, data in sorted(
@@ -138,7 +141,7 @@ def _build_recent_activity(records, limit=12):
                 }
             )
 
-        recent.append(
+        activity.append(
             {
                 "timestamp": _record_sort_timestamp(record),
                 "status": record.get("status") or 0,
@@ -147,13 +150,15 @@ def _build_recent_activity(records, limit=12):
                 "retry_after_s": ((record.get("ratelimit") or {}).get("retry_after_s") or 0),
                 "input_tokens": _usage_int(usage.get("input_tokens")),
                 "output_tokens": _usage_int(usage.get("output_tokens")),
+                "cache_create_tokens": _usage_int(usage.get("cache_creation_input_tokens")),
+                "cache_read_tokens": _usage_int(usage.get("cache_read_input_tokens")),
                 "cache_tokens": _usage_int(usage.get("cache_creation_input_tokens"))
                 + _usage_int(usage.get("cache_read_input_tokens")),
                 "windows": windows,
             }
         )
 
-    return recent
+    return activity
 
 
 def _downsample(series, max_points=500):
@@ -185,13 +190,15 @@ def _build_dashboard_data(records):
     budget_estimates = anl.build_session_budget_estimates(records)
     ts_5h = anl.build_utilization_time_series(records, window="5h")
     ts_7d = anl.build_utilization_time_series(records, window="7d")
+    activity_records = _build_activity_records(records)
     return {
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "token_summary": token_summary,
         "budget_estimates": budget_estimates,
         "time_series_5h": _downsample(ts_5h),
         "time_series_7d": _downsample(ts_7d),
-        "recent_activity": _build_recent_activity(records),
+        "recent_activity": activity_records[:12],
+        "activity_records": activity_records,
     }
 
 
@@ -843,6 +850,7 @@ def main():
                 "budget_estimates": {},
                 "time_series_5h": [],
                 "time_series_7d": [],
+                "activity_records": [],
                 "recent_activity": [],
             }
         json.dump(data, sys.stdout)
