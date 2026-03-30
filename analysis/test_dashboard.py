@@ -122,6 +122,7 @@ def test_output_includes_window_reset_labels():
     assert "Reset: 2026-04-04 02:00 UTC" in html
     assert "7d sonnet" in html
     assert "In: " in html
+    assert "In: in " not in html
 
 
 def test_output_flag_writes_to_path(tmp_path):

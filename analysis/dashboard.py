@@ -88,7 +88,7 @@ def _fmt_reset_countdown(reset_ts, now_dt):
         parts.append(f"{hours}h")
     if minutes or not parts:
         parts.append(f"{minutes}m")
-    return "in " + " ".join(parts[:2])
+    return " ".join(parts[:2])
 
 
 def _fmt_window_status(status):

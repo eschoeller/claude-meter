@@ -221,7 +221,7 @@ function formatCountdown(resetTs) {
   if (days > 0) parts.push(days + 'd');
   if (hours > 0) parts.push(hours + 'h');
   if (minutes > 0 || parts.length === 0) parts.push(minutes + 'm');
-  return 'in ' + parts.slice(0, 2).join(' ');
+  return parts.slice(0, 2).join(' ');
 }
 
 function formatActivityTime(ts) {
