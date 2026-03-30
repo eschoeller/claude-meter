@@ -420,7 +420,7 @@ def _generate_html(data):
   }}
   .window-grid {{
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 16px;
   }}
   .window-card {{
@@ -549,6 +549,7 @@ def _generate_html(data):
   .color-red {{ color: var(--red); }}
   @media (max-width: 700px) {{
     .grid {{ grid-template-columns: 1fr; }}
+    .window-grid {{ grid-template-columns: 1fr; }}
     .header {{ flex-direction: column; gap: 8px; }}
   }}
 </style>
@@ -568,16 +569,13 @@ def _generate_html(data):
 <div class="container">
 
   <div class="grid">
-    <div class="card full">
+    <div class="card">
       <h2>Window Overview</h2>
       <div class="window-grid">
         {window_cards_html}
       </div>
     </div>
-  </div>
-
-  <div class="grid">
-    <div class="card full">
+    <div class="card">
       <h2>Token Usage</h2>
       <table>
         <tr><th>Type</th><th>Tokens</th></tr>
