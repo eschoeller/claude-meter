@@ -39,6 +39,8 @@
   .header .meta { font-size: 13px; color: var(--text-muted); }
   .header .meta span { margin-right: 16px; }
   .header .meta strong { color: var(--text); }
+  .header-controls { margin-left: auto; margin-bottom: 0; }
+  .header-label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
   .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--green); margin-right: 6px; animation: pulse 2s infinite; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
   .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
@@ -116,6 +118,7 @@
     .grid { grid-template-columns: 1fr; }
     .window-grid { grid-template-columns: 1fr; }
     .header { flex-direction: column; gap: 8px; }
+    .header-controls { margin-left: 0; width: 100%; }
   }
 </style>
 </head>
@@ -125,9 +128,19 @@
 
 <div class="header">
   <h1><span class="live-dot"></span>claude-meter</h1>
+  <div class="controls-row header-controls">
+    <span class="header-label">Period</span>
+    <div class="toggle-group" id="dashboardRangeControls">
+      <button class="toggle-btn" type="button" data-dashboard-range="1h">1h</button>
+      <button class="toggle-btn active" type="button" data-dashboard-range="5h">5h</button>
+      <button class="toggle-btn" type="button" data-dashboard-range="24h">24h</button>
+      <button class="toggle-btn" type="button" data-dashboard-range="7d">7d</button>
+      <button class="toggle-btn" type="button" data-dashboard-range="all">All</button>
+    </div>
+  </div>
   <div class="meta">
     <span>Plan: <strong id="planTier">-</strong></span>
-    <span>Period: <strong id="dateRange">-</strong></span>
+    <span>Data: <strong id="dateRange">-</strong></span>
     <span>API calls: <strong id="apiCalls">-</strong></span>
     <span>Updated: <strong id="updatedAt">-</strong></span>
   </div>
@@ -187,12 +200,6 @@
           <button class="toggle-btn" type="button" data-metric="all">All</button>
           <button class="toggle-btn" type="button" data-metric="cache">Cache</button>
         </div>
-        <div class="toggle-group" id="tokenRangeControls">
-          <button class="toggle-btn" type="button" data-range="1h">1h</button>
-          <button class="toggle-btn active" type="button" data-range="5h">5h</button>
-          <button class="toggle-btn" type="button" data-range="24h">24h</button>
-          <button class="toggle-btn" type="button" data-range="all">All</button>
-        </div>
         <div class="toggle-group" id="tokenIntervalControls">
           <button class="toggle-btn" type="button" data-interval="1m">1m</button>
           <button class="toggle-btn active" type="button" data-interval="5m">5m</button>
@@ -242,15 +249,56 @@ let utilizationChart = null;
 let tokenFlowChart = null;
 let latestStats = null;
 let tokenFlowBuckets = [];
+const dashboardStorageKey = 'claude-meter.dashboard-controls';
 const tokenFlowStorageKey = 'claude-meter.token-flow-controls';
+
+const dashboardState = {
+  range: '5h',
+};
 
 const tokenFlowState = {
   metric: 'io',
-  range: '5h',
   interval: '5m',
   model: 'all',
   bucketFilter: null,
 };
+
+function isValidRange(range) {
+  return range === '1h' || range === '5h' || range === '24h' || range === '7d' || range === 'all';
+}
+
+function loadDashboardPreferences() {
+  try {
+    const raw = window.localStorage.getItem(dashboardStorageKey);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (isValidRange(parsed.range)) {
+        dashboardState.range = parsed.range;
+        return;
+      }
+    }
+
+    // Migrate the previous token-flow-local range to the new page-level scope.
+    const legacyRaw = window.localStorage.getItem(tokenFlowStorageKey);
+    if (!legacyRaw) return;
+    const legacyParsed = JSON.parse(legacyRaw);
+    if (isValidRange(legacyParsed.range)) {
+      dashboardState.range = legacyParsed.range;
+    }
+  } catch (_err) {
+    // Ignore malformed or unavailable local storage.
+  }
+}
+
+function persistDashboardPreferences() {
+  try {
+    window.localStorage.setItem(dashboardStorageKey, JSON.stringify({
+      range: dashboardState.range,
+    }));
+  } catch (_err) {
+    // Ignore storage failures and continue with in-memory state.
+  }
+}
 
 function loadTokenFlowPreferences() {
   try {
@@ -259,9 +307,6 @@ function loadTokenFlowPreferences() {
     const parsed = JSON.parse(raw);
     if (parsed.metric === 'io' || parsed.metric === 'all' || parsed.metric === 'cache') {
       tokenFlowState.metric = parsed.metric;
-    }
-    if (parsed.range === '1h' || parsed.range === '5h' || parsed.range === '24h' || parsed.range === 'all') {
-      tokenFlowState.range = parsed.range;
     }
     if (parsed.interval === '1m' || parsed.interval === '5m' || parsed.interval === '15m') {
       tokenFlowState.interval = parsed.interval;
@@ -278,7 +323,6 @@ function persistTokenFlowPreferences() {
   try {
     window.localStorage.setItem(tokenFlowStorageKey, JSON.stringify({
       metric: tokenFlowState.metric,
-      range: tokenFlowState.range,
       interval: tokenFlowState.interval,
       model: tokenFlowState.model,
     }));
@@ -525,6 +569,7 @@ function getRangeDurationMs(range) {
   if (range === '1h') return 60 * 60 * 1000;
   if (range === '5h') return 5 * 60 * 60 * 1000;
   if (range === '24h') return 24 * 60 * 60 * 1000;
+  if (range === '7d') return 7 * 24 * 60 * 60 * 1000;
   return null;
 }
 
@@ -549,7 +594,7 @@ function getSeriesSpecs(metric) {
 
 function setActiveToggle(groupId, attrName, value) {
   document.querySelectorAll('#' + groupId + ' [data-' + attrName + ']').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset[attrName] === value);
+    btn.classList.toggle('active', btn.getAttribute('data-' + attrName) === value);
   });
 }
 
@@ -575,29 +620,109 @@ function syncTokenModelOptions(records) {
   select.value = tokenFlowState.model;
 }
 
-function getScopedActivityRecords(records) {
-  if (!records.length) return [];
+function getRangeBounds(records, range) {
+  if (!records.length) {
+    const now = Date.now();
+    return { latestMs: now, rangeStartMs: now };
+  }
 
   const latestMs = getLatestActivityMs(records);
-  const durationMs = getRangeDurationMs(tokenFlowState.range);
+  const durationMs = getRangeDurationMs(range);
   const rangeStartMs = durationMs == null ? getEarliestActivityMs(records) : latestMs - durationMs;
+  return { latestMs, rangeStartMs };
+}
+
+function getDashboardScopedActivityRecords(records) {
+  if (!records.length) return [];
+
+  const bounds = getRangeBounds(records, dashboardState.range);
 
   return records.filter(record => {
     const ts = Date.parse(record.timestamp || '');
     if (Number.isNaN(ts)) return false;
-    if (ts < rangeStartMs || ts > latestMs) return false;
+    return ts >= bounds.rangeStartMs && ts <= bounds.latestMs;
+  });
+}
+
+function getTokenFlowScopedActivityRecords(records) {
+  const scopedRecords = getDashboardScopedActivityRecords(records);
+  return scopedRecords.filter(record => {
     if (tokenFlowState.model !== 'all' && (record.model || '-') !== tokenFlowState.model) return false;
     return true;
   });
 }
 
+function summarizeActivityRecords(records) {
+  const summary = {
+    apiCalls: records.length,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreateTokens: 0,
+    firstMs: null,
+    lastMs: null,
+    models: {},
+  };
+
+  for (const record of records) {
+    const input = record.input_tokens || 0;
+    const output = record.output_tokens || 0;
+    const cacheRead = record.cache_read_tokens || 0;
+    const cacheCreate = record.cache_create_tokens || 0;
+    const model = record.model || '-';
+    const ts = Date.parse(record.timestamp || '');
+
+    summary.inputTokens += input;
+    summary.outputTokens += output;
+    summary.cacheReadTokens += cacheRead;
+    summary.cacheCreateTokens += cacheCreate;
+
+    if (!summary.models[model]) {
+      summary.models[model] = { calls: 0, input: 0, output: 0 };
+    }
+    summary.models[model].calls += 1;
+    summary.models[model].input += input;
+    summary.models[model].output += output;
+
+    if (!Number.isNaN(ts)) {
+      if (summary.firstMs == null || ts < summary.firstMs) summary.firstMs = ts;
+      if (summary.lastMs == null || ts > summary.lastMs) summary.lastMs = ts;
+    }
+  }
+
+  summary.totalTokens = summary.inputTokens + summary.outputTokens + summary.cacheReadTokens + summary.cacheCreateTokens;
+  summary.cacheReadPct = summary.totalTokens > 0
+    ? Math.round((summary.cacheReadTokens / summary.totalTokens) * 1000) / 10
+    : 0;
+  return summary;
+}
+
+function formatCoverageLabel(firstMs, lastMs) {
+  if (firstMs == null || lastMs == null) return 'N/A';
+  const sameDay = new Date(firstMs).toDateString() === new Date(lastMs).toDateString();
+  const startFmt = new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(firstMs));
+  const endFmt = new Intl.DateTimeFormat(undefined, sameDay ? {
+    hour: 'numeric',
+    minute: '2-digit',
+  } : {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(lastMs));
+  return startFmt + ' to ' + endFmt;
+}
+
 function buildTokenFlow(records) {
-  const scopedRecords = getScopedActivityRecords(records);
-  const latestMs = getLatestActivityMs(records);
+  const scopedRecords = getTokenFlowScopedActivityRecords(records);
+  const latestMs = scopedRecords.length ? getLatestActivityMs(scopedRecords) : getLatestActivityMs(records);
   const earliestMs = scopedRecords.length ? getEarliestActivityMs(scopedRecords) : latestMs;
-  const durationMs = getRangeDurationMs(tokenFlowState.range);
-  const rangeStartMs = durationMs == null ? earliestMs : latestMs - durationMs;
-  const spanMs = Math.max(latestMs - rangeStartMs, 1);
+  const rangeStartMs = scopedRecords.length ? earliestMs : latestMs;
   const bucketMs = pickBucketMs(tokenFlowState.interval);
   const alignedStartMs = Math.floor(rangeStartMs / bucketMs) * bucketMs;
   const alignedEndMs = Math.floor(latestMs / bucketMs) * bucketMs;
@@ -754,7 +879,7 @@ function renderTokenFlowChart(records) {
 
 function updateRecentActivityFromState() {
   const records = latestStats ? getActivityRecords(latestStats) : [];
-  const scoped = getScopedActivityRecords(records);
+  const scoped = getTokenFlowScopedActivityRecords(records);
   let filtered = scoped;
 
   if (tokenFlowState.bucketFilter) {
@@ -770,15 +895,35 @@ function updateRecentActivityFromState() {
   const modelLabel = tokenFlowState.model === 'all' ? 'all models' : formatModelLabel(tokenFlowState.model);
   const baseLabel = tokenFlowState.bucketFilter
     ? 'Showing ' + Math.min(filtered.length, limit) + ' of ' + filtered.length + ' requests from ' + formatBucketLabel(tokenFlowState.bucketFilter.startMs, tokenFlowState.bucketFilter.endMs)
-    : 'Showing latest ' + Math.min(filtered.length, limit) + ' of ' + filtered.length + ' requests for ' + modelLabel + ' over ' + formatRangeLabel(tokenFlowState.range) + ' with ' + formatIntervalLabel(tokenFlowState.interval);
+    : 'Showing latest ' + Math.min(filtered.length, limit) + ' of ' + filtered.length + ' requests for ' + modelLabel + ' over ' + formatRangeLabel(dashboardState.range) + ' with ' + formatIntervalLabel(tokenFlowState.interval);
   document.getElementById('recentActivitySummary').textContent = baseLabel;
   document.getElementById('clearActivityFilter').hidden = !tokenFlowState.bucketFilter;
+}
+
+function filterUtilizationSeries(series) {
+  const parsed = series
+    .map(point => {
+      const ts = Date.parse(point.timestamp || '');
+      if (Number.isNaN(ts) || point.utilization == null) return null;
+      return { x: ts, y: Math.round(point.utilization * 1000) / 10 };
+    })
+    .filter(Boolean);
+
+  const durationMs = getRangeDurationMs(dashboardState.range);
+  if (durationMs == null || parsed.length === 0) return parsed;
+
+  const latestMs = parsed[parsed.length - 1].x;
+  const rangeStartMs = latestMs - durationMs;
+  return parsed.filter(point => point.x >= rangeStartMs && point.x <= latestMs);
 }
 
 function updateUtilizationChart(ts5h, ts7d) {
   const ctx = document.getElementById('utilizationChart');
   if (!ctx) return;
-  if (ts5h.length === 0 && ts7d.length === 0) {
+  const data5h = filterUtilizationSeries(ts5h);
+  const data7d = filterUtilizationSeries(ts7d);
+
+  if (data5h.length === 0 && data7d.length === 0) {
     if (utilizationChart) {
       utilizationChart.destroy();
       utilizationChart = null;
@@ -789,21 +934,6 @@ function updateUtilizationChart(ts5h, ts7d) {
   }
   ctx.style.display = 'block';
   document.getElementById('noChartData').style.display = 'none';
-
-  const data5h = ts5h
-    .map(point => {
-      const ts = Date.parse(point.timestamp || '');
-      if (Number.isNaN(ts) || point.utilization == null) return null;
-      return { x: ts, y: Math.round(point.utilization * 1000) / 10 };
-    })
-    .filter(Boolean);
-  const data7d = ts7d
-    .map(point => {
-      const ts = Date.parse(point.timestamp || '');
-      if (Number.isNaN(ts) || point.utilization == null) return null;
-      return { x: ts, y: Math.round(point.utilization * 1000) / 10 };
-    })
-    .filter(Boolean);
 
   if (utilizationChart) {
     utilizationChart.data.datasets[0].data = data5h;
@@ -861,31 +991,62 @@ function updateUtilizationChart(ts5h, ts7d) {
 function syncTokenControlUi(records) {
   syncTokenModelOptions(records);
   setActiveToggle('tokenMetricControls', 'metric', tokenFlowState.metric);
-  setActiveToggle('tokenRangeControls', 'range', tokenFlowState.range);
   setActiveToggle('tokenIntervalControls', 'interval', tokenFlowState.interval);
+}
+
+function syncDashboardControlUi() {
+  setActiveToggle('dashboardRangeControls', 'dashboard-range', dashboardState.range);
 }
 
 function refreshTokenFlowView() {
   if (!latestStats) return;
-  const records = getActivityRecords(latestStats);
+  const records = getDashboardScopedActivityRecords(getActivityRecords(latestStats));
   syncTokenControlUi(records);
   renderTokenFlowChart(records);
   updateRecentActivityFromState();
+}
+
+function refreshDashboardView() {
+  if (!latestStats) return;
+
+  const records = getActivityRecords(latestStats);
+  const scopedRecords = getDashboardScopedActivityRecords(records);
+  const filtered = summarizeActivityRecords(scopedRecords);
+
+  syncDashboardControlUi();
+  document.getElementById('dateRange').textContent = formatCoverageLabel(filtered.firstMs, filtered.lastMs);
+  document.getElementById('apiCalls').textContent = fmt(filtered.apiCalls);
+  document.getElementById('tokInput').textContent = fmt(filtered.inputTokens);
+  document.getElementById('tokOutput').textContent = fmt(filtered.outputTokens);
+  document.getElementById('tokCacheRead').textContent = fmt(filtered.cacheReadTokens) + (filtered.cacheReadPct ? ' (' + filtered.cacheReadPct + '%)' : '');
+  document.getElementById('tokCacheCreate').textContent = fmt(filtered.cacheCreateTokens);
+  document.getElementById('tokTotal').textContent = fmt(filtered.totalTokens);
+
+  let modelHTML = '';
+  for (const [model, mdata] of Object.entries(filtered.models).sort((a, b) => b[1].calls - a[1].calls)) {
+    modelHTML += '<tr><td>' + esc(formatModelLabel(model)) + '</td><td>' + fmt(mdata.calls) + '</td><td>' + fmtTokens(mdata.input) + '</td><td>' + fmtTokens(mdata.output) + '</td></tr>';
+  }
+  document.getElementById('modelRows').innerHTML = modelHTML || '<tr><td colspan="4" class="muted">No model data in this period</td></tr>';
+
+  updateUtilizationChart(latestStats.time_series_5h || [], latestStats.time_series_7d || []);
+  refreshTokenFlowView();
+}
+
+function initDashboardControls() {
+  document.querySelectorAll('#dashboardRangeControls [data-dashboard-range]').forEach(button => {
+    button.addEventListener('click', () => {
+      dashboardState.range = button.dataset.dashboardRange;
+      tokenFlowState.bucketFilter = null;
+      persistDashboardPreferences();
+      refreshDashboardView();
+    });
+  });
 }
 
 function initTokenFlowControls() {
   document.querySelectorAll('#tokenMetricControls [data-metric]').forEach(button => {
     button.addEventListener('click', () => {
       tokenFlowState.metric = button.dataset.metric;
-      tokenFlowState.bucketFilter = null;
-      persistTokenFlowPreferences();
-      refreshTokenFlowView();
-    });
-  });
-
-  document.querySelectorAll('#tokenRangeControls [data-range]').forEach(button => {
-    button.addEventListener('click', () => {
-      tokenFlowState.range = button.dataset.range;
       tokenFlowState.bucketFilter = null;
       persistTokenFlowPreferences();
       refreshTokenFlowView();
@@ -921,21 +1082,9 @@ function updateDashboard(data) {
   const budget = data.budget_estimates || {};
 
   document.getElementById('planTier').textContent = ts.plan_tier || 'unknown';
-  const first = (ts.first_timestamp || '').substring(0, 10);
-  const last = (ts.last_timestamp || '').substring(0, 10);
-  document.getElementById('dateRange').textContent = first && last ? first + ' to ' + last : 'N/A';
-  document.getElementById('apiCalls').textContent = fmt(ts.api_calls || 0);
   document.getElementById('updatedAt').textContent = (data.generated_at || '').substring(0, 19).replace('T', ' ') + ' UTC';
 
   renderWindowCards(ts.windows || {});
-
-  document.getElementById('tokInput').textContent = fmt(ts.input_tokens || 0);
-  document.getElementById('tokOutput').textContent = fmt(ts.output_tokens || 0);
-  const cacheRead = ts.cache_read_tokens || 0;
-  document.getElementById('tokCacheRead').textContent = fmt(cacheRead) + (ts.cache_read_pct ? ' (' + ts.cache_read_pct + '%)' : '');
-  document.getElementById('tokCacheCreate').textContent = fmt(ts.cache_create_tokens || 0);
-  const total = (ts.input_tokens || 0) + (ts.output_tokens || 0) + cacheRead + (ts.cache_create_tokens || 0);
-  document.getElementById('tokTotal').textContent = fmt(total);
 
   let budgetHTML = '';
   for (const [wname, est] of Object.entries(budget).sort()) {
@@ -949,16 +1098,7 @@ function updateDashboard(data) {
     }
   }
   document.getElementById('budgetRows').innerHTML = budgetHTML || '<tr><td colspan="5" class="muted">Not enough data</td></tr>';
-
-  let modelHTML = '';
-  const models = ts.models || {};
-  for (const [model, mdata] of Object.entries(models).sort((a, b) => b[1].calls - a[1].calls)) {
-    modelHTML += '<tr><td>' + esc(model) + '</td><td>' + fmt(mdata.calls) + '</td><td>' + fmtTokens(mdata.input) + '</td><td>' + fmtTokens(mdata.output) + '</td></tr>';
-  }
-  document.getElementById('modelRows').innerHTML = modelHTML || '<tr><td colspan="4" class="muted">No model data</td></tr>';
-
-  updateUtilizationChart(data.time_series_5h || [], data.time_series_7d || []);
-  refreshTokenFlowView();
+  refreshDashboardView();
 }
 
 async function fetchStats() {
@@ -973,7 +1113,9 @@ async function fetchStats() {
   }
 }
 
+loadDashboardPreferences();
 loadTokenFlowPreferences();
+initDashboardControls();
 initTokenFlowControls();
 fetchStats();
 setInterval(fetchStats, 5000);
