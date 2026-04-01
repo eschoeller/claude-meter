@@ -790,21 +790,22 @@ function updateUtilizationChart(ts5h, ts7d) {
   ctx.style.display = 'block';
   document.getElementById('noChartData').style.display = 'none';
 
-  const allTs = new Set();
-  ts5h.forEach(p => allTs.add(p.timestamp));
-  ts7d.forEach(p => allTs.add(p.timestamp));
-  const labels = Array.from(allTs).sort();
-
-  const map5h = {};
-  ts5h.forEach(p => { map5h[p.timestamp] = p.utilization; });
-  const map7d = {};
-  ts7d.forEach(p => { map7d[p.timestamp] = p.utilization; });
-
-  const data5h = labels.map(ts => ({ x: ts, y: map5h[ts] != null ? (map5h[ts] * 100).toFixed(1) : null }));
-  const data7d = labels.map(ts => ({ x: ts, y: map7d[ts] != null ? (map7d[ts] * 100).toFixed(1) : null }));
+  const data5h = ts5h
+    .map(point => {
+      const ts = Date.parse(point.timestamp || '');
+      if (Number.isNaN(ts) || point.utilization == null) return null;
+      return { x: ts, y: Math.round(point.utilization * 1000) / 10 };
+    })
+    .filter(Boolean);
+  const data7d = ts7d
+    .map(point => {
+      const ts = Date.parse(point.timestamp || '');
+      if (Number.isNaN(ts) || point.utilization == null) return null;
+      return { x: ts, y: Math.round(point.utilization * 1000) / 10 };
+    })
+    .filter(Boolean);
 
   if (utilizationChart) {
-    utilizationChart.data.labels = labels;
     utilizationChart.data.datasets[0].data = data5h;
     utilizationChart.data.datasets[1].data = data7d;
     utilizationChart.update('none');
@@ -814,27 +815,25 @@ function updateUtilizationChart(ts5h, ts7d) {
   utilizationChart = new Chart(ctx, {
     type: 'line',
     data: {
-      labels: labels,
       datasets: [
-        { label: '5h window', data: data5h, borderColor: '#7aa2f7', backgroundColor: 'rgba(122,162,247,0.1)', borderWidth: 1.5, pointRadius: 0, fill: true, tension: 0.1, spanGaps: false },
-        { label: '7d window', data: data7d, borderColor: '#bb9af7', backgroundColor: 'rgba(187,154,247,0.1)', borderWidth: 1.5, pointRadius: 0, fill: true, tension: 0.1, spanGaps: false }
+        { label: '5h window', data: data5h, borderColor: '#7aa2f7', backgroundColor: 'rgba(122,162,247,0.1)', borderWidth: 1.5, pointRadius: data5h.length < 60 ? 2 : 0, pointHoverRadius: 4, fill: true, tension: 0.1, spanGaps: false },
+        { label: '7d window', data: data7d, borderColor: '#bb9af7', backgroundColor: 'rgba(187,154,247,0.1)', borderWidth: 1.5, pointRadius: data7d.length < 60 ? 2 : 0, pointHoverRadius: 4, fill: true, tension: 0.1, spanGaps: false }
       ]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       animation: false,
-      interaction: { mode: 'index', intersect: false },
+      interaction: { mode: 'nearest', intersect: false },
       scales: {
         x: {
-          type: 'category',
+          type: 'linear',
           ticks: {
             color: '#565f89',
             maxTicksLimit: 12,
             maxRotation: 45,
             callback: function(value) {
-              const label = this.getLabelForValue(value);
-              return label ? label.substring(5, 16).replace('T', ' ') : '';
+              return formatChartTickLabel(value);
             }
           },
           grid: { color: 'rgba(65,72,104,0.3)' },
@@ -850,7 +849,7 @@ function updateUtilizationChart(ts5h, ts7d) {
         legend: { labels: { color: '#c0caf5' } },
         tooltip: {
           callbacks: {
-            title: items => items.length ? items[0].raw.x.replace('T', ' ').substring(0, 19) : '',
+            title: items => items.length ? new Date(items[0].raw.x).toLocaleString() : '',
             label: item => item.dataset.label + ': ' + item.raw.y + '%',
           }
         }

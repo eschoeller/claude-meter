@@ -663,22 +663,36 @@ function buildChart() {{
       datasets: [
         {{
           label: '5h window',
-          data: ts5h.map(p => ({{ x: p.timestamp, y: p.utilization != null ? (p.utilization * 100).toFixed(1) : null }})),
+          data: ts5h
+            .map(p => {{
+              const ts = Date.parse(p.timestamp || '');
+              if (Number.isNaN(ts) || p.utilization == null) return null;
+              return {{ x: ts, y: Math.round(p.utilization * 1000) / 10 }};
+            }})
+            .filter(Boolean),
           borderColor: '#7aa2f7',
           backgroundColor: 'rgba(122, 162, 247, 0.1)',
           borderWidth: 1.5,
           pointRadius: ts5h.length < 60 ? 2 : 0,
+          pointHoverRadius: 4,
           fill: true,
           tension: 0.1,
           spanGaps: false,
         }},
         {{
           label: '7d window',
-          data: ts7d.map(p => ({{ x: p.timestamp, y: p.utilization != null ? (p.utilization * 100).toFixed(1) : null }})),
+          data: ts7d
+            .map(p => {{
+              const ts = Date.parse(p.timestamp || '');
+              if (Number.isNaN(ts) || p.utilization == null) return null;
+              return {{ x: ts, y: Math.round(p.utilization * 1000) / 10 }};
+            }})
+            .filter(Boolean),
           borderColor: '#bb9af7',
           backgroundColor: 'rgba(187, 154, 247, 0.1)',
           borderWidth: 1.5,
           pointRadius: ts7d.length < 60 ? 2 : 0,
+          pointHoverRadius: 4,
           fill: true,
           tension: 0.1,
           spanGaps: false,
@@ -689,20 +703,23 @@ function buildChart() {{
       responsive: true,
       maintainAspectRatio: false,
       interaction: {{
-        mode: 'index',
+        mode: 'nearest',
         intersect: false,
       }},
       scales: {{
         x: {{
-          type: 'category',
+          type: 'linear',
           ticks: {{
             color: '#565f89',
             maxTicksLimit: 12,
             maxRotation: 45,
-            callback: function(value, index) {{
-              const label = this.getLabelForValue(value);
-              if (!label) return '';
-              return label.substring(5, 16).replace('T', ' ');
+            callback: function(value) {{
+              return new Intl.DateTimeFormat(undefined, {{
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+              }}).format(new Date(value));
             }}
           }},
           grid: {{ color: 'rgba(65, 72, 104, 0.3)' }},
@@ -726,7 +743,7 @@ function buildChart() {{
             title: function(items) {{
               if (!items.length) return '';
               const raw = items[0].raw;
-              return raw.x ? raw.x.replace('T', ' ').substring(0, 19) : '';
+              return raw.x ? new Date(raw.x).toLocaleString() : '';
             }},
             label: function(item) {{
               return item.dataset.label + ': ' + item.raw.y + '%';
@@ -737,25 +754,6 @@ function buildChart() {{
     }}
   }});
 }}
-
-// Merge x-axis labels from both series for category scale
-(function() {{
-  const ts5h = DATA.ts_5h || [];
-  const ts7d = DATA.ts_7d || [];
-  const allTimestamps = new Set();
-  ts5h.forEach(p => allTimestamps.add(p.timestamp));
-  ts7d.forEach(p => allTimestamps.add(p.timestamp));
-  const sortedLabels = Array.from(allTimestamps).sort();
-
-  // Rebuild data indexed by timestamp for alignment
-  const map5h = {{}};
-  ts5h.forEach(p => {{ map5h[p.timestamp] = p.utilization; }});
-  const map7d = {{}};
-  ts7d.forEach(p => {{ map7d[p.timestamp] = p.utilization; }});
-
-  DATA.ts_5h = sortedLabels.map(ts => ({{ timestamp: ts, utilization: map5h[ts] ?? null }}));
-  DATA.ts_7d = sortedLabels.map(ts => ({{ timestamp: ts, utilization: map7d[ts] ?? null }}));
-}})();
 
 buildChart();
 </script>
