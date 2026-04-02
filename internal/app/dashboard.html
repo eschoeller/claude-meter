@@ -35,11 +35,12 @@
     align-items: center;
     gap: 24px;
   }
+  .header-main { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
   .header h1 { font-size: 18px; font-weight: 600; color: var(--accent); }
-  .header .meta { font-size: 13px; color: var(--text-muted); }
+  .header .meta { font-size: 13px; color: var(--text-muted); margin-left: auto; }
   .header .meta span { margin-right: 16px; }
   .header .meta strong { color: var(--text); }
-  .header-controls { margin-left: auto; margin-bottom: 0; }
+  .header-controls { margin-bottom: 0; }
   .header-label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
   .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--green); margin-right: 6px; animation: pulse 2s infinite; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
@@ -118,7 +119,8 @@
     .grid { grid-template-columns: 1fr; }
     .window-grid { grid-template-columns: 1fr; }
     .header { flex-direction: column; gap: 8px; }
-    .header-controls { margin-left: 0; width: 100%; }
+    .header-main, .header-controls, .header .meta { width: 100%; }
+    .header .meta { margin-left: 0; }
   }
 </style>
 </head>
@@ -127,15 +129,17 @@
 <div class="error-banner" id="errorBanner">Could not reach stats API. Retrying...</div>
 
 <div class="header">
-  <h1><span class="live-dot"></span>claude-meter</h1>
-  <div class="controls-row header-controls">
-    <span class="header-label">Period</span>
-    <div class="toggle-group" id="dashboardRangeControls">
-      <button class="toggle-btn" type="button" data-dashboard-range="1h">1h</button>
-      <button class="toggle-btn active" type="button" data-dashboard-range="5h">5h</button>
-      <button class="toggle-btn" type="button" data-dashboard-range="24h">24h</button>
-      <button class="toggle-btn" type="button" data-dashboard-range="7d">7d</button>
-      <button class="toggle-btn" type="button" data-dashboard-range="all">All</button>
+  <div class="header-main">
+    <h1><span class="live-dot"></span>claude-meter</h1>
+    <div class="controls-row header-controls">
+      <span class="header-label">Period</span>
+      <div class="toggle-group" id="dashboardRangeControls">
+        <button class="toggle-btn" type="button" data-dashboard-range="1h">1h</button>
+        <button class="toggle-btn active" type="button" data-dashboard-range="5h">5h</button>
+        <button class="toggle-btn" type="button" data-dashboard-range="24h">24h</button>
+        <button class="toggle-btn" type="button" data-dashboard-range="7d">7d</button>
+        <button class="toggle-btn" type="button" data-dashboard-range="all">All</button>
+      </div>
     </div>
   </div>
   <div class="meta">
