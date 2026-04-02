@@ -37,7 +37,7 @@
   }
   .header-main { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; }
   .header h1 { font-size: 18px; font-weight: 600; color: var(--accent); }
-  .header .meta { font-size: 13px; color: var(--text-muted); margin-left: auto; }
+  .header .meta { font-size: 13px; color: var(--text-muted); margin-left: auto; transform: translateY(20px); }
   .header .meta span { margin-right: 16px; }
   .header .meta strong { color: var(--text); }
   .header-controls { margin-bottom: 0; transform: translateY(20px); }
@@ -120,7 +120,7 @@
     .window-grid { grid-template-columns: 1fr; }
     .header { flex-direction: column; gap: 8px; }
     .header-main, .header-controls, .header .meta { width: 100%; }
-    .header .meta { margin-left: 0; }
+    .header .meta { margin-left: 0; transform: none; }
   }
 </style>
 </head>
